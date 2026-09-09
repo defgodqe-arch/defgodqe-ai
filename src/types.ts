@@ -1,23 +1,13 @@
 /**
- * Type definitions for the LLM chat application.
+ * Type definitions for the defgodqe AI Worker.
  */
-
 export interface Env {
-	/**
-	 * Binding for the Workers AI API.
-	 */
-	AI: Ai;
-
-	/**
-	 * Binding for static assets.
-	 */
-	ASSETS: { fetch: (request: Request) => Promise<Response> };
+  AI: Ai;
+  ASSETS: { fetch: (request: Request) => Promise<Response> };
+  RATE_LIMITER: RateLimit;
 }
 
-/**
- * Represents a chat message.
- */
 export interface ChatMessage {
-	role: "system" | "user" | "assistant";
-	content: string;
+  role: "system" | "user" | "assistant";
+  content: string;
 }
