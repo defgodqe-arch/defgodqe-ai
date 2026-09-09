@@ -63,26 +63,20 @@ function checkRateLimit(request: Request) {
 
 function validateRequest(request: Request) {
   const contentLength = Number(request.headers.get("content-length") || 0);
-  if (contentLength > MAX_BODY_BYTES) {
-    return "Request body is too large.";
-  }
-  return null;
+  return contentLength > MAX_BODY_BYTES ? "Request body is too large." : null;
 }
 
 function normalizeMessages(value: unknown): ChatMessage[] {
   if (!Array.isArray(value)) return [];
-
   return value
     .slice(-MAX_MESSAGES)
-    .map((message) => ({
+    .map((message: any) => ({
       role: message?.role,
       content: String(message?.content || "").slice(0, MAX_MESSAGE_CHARS),
     }))
     .filter(
       (message): message is ChatMessage =>
-        (message.role === "system" ||
-          message.role === "user" ||
-          message.role === "assistant") &&
+        (message.role === "system" || message.role === "user" || message.role === "assistant") &&
         Boolean(message.content),
     );
 }
@@ -100,21 +94,18 @@ function extractText(value: any): string {
   if (typeof value.output_text === "string") return value.output_text;
   if (typeof value.response === "string") return value.response;
   if (typeof value.text === "string") return value.text;
-
   if (Array.isArray(value.output)) {
     for (const item of value.output) {
       const found = extractText(item);
       if (found) return found;
     }
   }
-
   if (Array.isArray(value.content)) {
     for (const item of value.content) {
       const found = extractText(item);
       if (found) return found;
     }
   }
-
   return "";
 }
 
@@ -124,16 +115,13 @@ function extractSources(value: any) {
 
   function visit(node: any) {
     if (!node || results.length >= 8) return;
-
     if (Array.isArray(node)) {
       for (const item of node) visit(item);
       return;
     }
-
     if (typeof node !== "object") return;
 
-    const annotations = Array.isArray(node.annotations) ? node.annotations : [];
-    for (const annotation of annotations) {
+    for (const annotation of Array.isArray(node.annotations) ? node.annotations : []) {
       if (annotation?.type !== "url_citation") continue;
       const url = String(annotation?.url || annotation?.citation?.url || "").trim();
       if (!/^https?:\/\//i.test(url) || seen.has(url)) continue;
@@ -167,11 +155,7 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/") {
-      return json({
-        success: true,
-        service: "defgodqe-ai",
-        routes: ["/chat", "/web-search", "/generate-image"],
-      });
+      return json({ success: true, service: "defgodqe-ai", routes: ["/chat", "/web-search", "/generate-image"] });
     }
 
     if (!["/chat", "/web-search", "/generate-image"].includes(url.pathname)) {
@@ -208,7 +192,6 @@ export default {
 async function handleChat(request: Request, env: Env, stream: boolean) {
   const body = (await request.json()) as { messages?: unknown };
   const messages = normalizeMessages(body.messages);
-
   if (!messages.length) return json({ success: false, error: "At least one message is required." }, 400);
 
   if (!messages.some((message) => message.role === "system")) {
@@ -226,11 +209,7 @@ async function handleChat(request: Request, env: Env, stream: boolean) {
   if (stream) {
     return new Response(result as ReadableStream, {
       status: 200,
-      headers: {
-        ...baseHeaders(),
-        "content-type": "text/event-stream; charset=utf-8",
-        connection: "keep-alive",
-      },
+      headers: { ...baseHeaders(), "content-type": "text/event-stream; charset=utf-8", connection: "keep-alive" },
     });
   }
 
@@ -253,38 +232,17 @@ async function handleWebSearch(request: Request, env: Env) {
   );
 
   const response = extractText(result);
-  return json({
-    success: Boolean(response),
-    response,
-    sources: extractSources(result),
-  });
+  return json({ success: Boolean(response), response, sources: extractSources(result) });
 }
 
 async function handleImage(request: Request, env: Env) {
   const body = (await request.json()) as { prompt?: unknown };
-  const prompt = String(body.prompt || "").trim().slice(0, 4000);
+  const prompt = String(body.prompt || "").trim().slice(0, 2048);
   if (!prompt) return json({ success: false, error: "An image prompt is required." }, 400);
 
-  const result: any = await env.AI.run(IMAGE_MODEL, {
-    prompt,
-    num_steps: 4,
-  });
-
-  const image = result?.image || result;
+  const result: any = await env.AI.run(IMAGE_MODEL, { prompt, num_steps: 4 });
+  const image = typeof result?.image === "string" ? result.image : "";
   if (!image) return json({ success: false, error: "Image generation returned no image." }, 502);
 
-  const bytes = image instanceof ArrayBuffer ? new Uint8Array(image) : image instanceof Uint8Array ? image : null;
-  if (!bytes) return json({ success: false, error: "Unsupported image response." }, 502);
-
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-  }
-
-  return json({
-    success: true,
-    image: btoa(binary),
-    mimeType: "image/jpeg",
-  });
+  return json({ success: true, image, mimeType: "image/jpeg" });
 }
