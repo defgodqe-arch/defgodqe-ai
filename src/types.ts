@@ -5,6 +5,7 @@ export interface Env {
   AI: Ai;
   ASSETS: { fetch: (request: Request) => Promise<Response> };
   RATE_LIMITER: RateLimit;
+  GAME_ROOMS: DurableObjectNamespace;
 }
 
 export interface ChatMessage {
