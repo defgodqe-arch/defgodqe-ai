@@ -2,7 +2,7 @@ import { Env, ChatMessage } from "./types";
 
 const CHAT_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast";
 const VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
-const TTS_MODEL = "@cf/deepgram/aura-2-en";
+const TTS_MODEL = "@cf/deegram/aura-2-en";
 const IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell";
 const MAX_BODY_BYTES = 120_000;
 const MAX_MESSAGES = 32;
@@ -11,9 +11,7 @@ const MAX_TOKENS = 1024;
 const RATE_WINDOW_MS = 60_000;
 const RATE_LIMIT = 30;
 const usage = { requests: 0, chat: 0, web: 0, vision: 0, image: 0, tts: 0, errors: 0, started: Date.now() };
-
 const SYSTEM_PROMPT = `You are defgodqe, an advanced AI assistant.\nYour name is defgodqe.\nNever claim to be ChatGPT or another AI.\nYour tagline is "Your AI. Your Ideas. Your World.".\nBe helpful, accurate, creative, concise and honest.\nNever fabricate facts, sources, URLs, actions or files.\nWhen giving code, make it complete and runnable whenever practical.`;
-
 const rateBuckets = new Map<string, { count: number; reset: number }>();
 function corsHeaders(): HeadersInit { return { "access-control-allow-origin": "*", "access-control-allow-methods": "GET,POST,OPTIONS", "access-control-allow-headers": "Content-Type, X-Defgodqe-Client, X-Turnstile-Token", "access-control-max-age": "86400" }; }
 function json(data: unknown, status = 200, extra: HeadersInit = {}) { return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", ...corsHeaders(), ...extra } }); }
@@ -24,13 +22,12 @@ function normalizeMessages(value: unknown): ChatMessage[] { if (!Array.isArray(v
 function baseHeaders() { return { ...corsHeaders(), "cache-control": "no-cache, no-store, must-revalidate" }; }
 function extractText(value: any): string { if (!value) return ""; if (typeof value === "string") return value; if (typeof value.output_text === "string") return value.output_text; if (typeof value.response === "string") return value.response; if (typeof value.text === "string") return value.text; if (Array.isArray(value.output)) for (const item of value.output) { const found = extractText(item); if (found) return found; } if (Array.isArray(value.content)) for (const item of value.content) { const found = extractText(item); if (found) return found; } return ""; }
 function extractSources(value: any) { const results: Array<{ title: string; url: string; domain: string }> = [], seen = new Set<string>(); function visit(node: any) { if (!node || results.length >= 8) return; if (Array.isArray(node)) { for (const item of node) visit(item); return; } if (typeof node !== "object") return; for (const annotation of Array.isArray(node.annotations) ? node.annotations : []) { if (annotation?.type !== "url_citation") continue; const url = String(annotation?.url || annotation?.citation?.url || "").trim(); if (!/^https?:\/\//i.test(url) || seen.has(url)) continue; seen.add(url); let domain = ""; try { domain = new URL(url).hostname.replace(/^www\./, ""); } catch {} results.push({ title: String(annotation?.title || annotation?.citation?.title || domain || url), url, domain }); } for (const [key, child] of Object.entries(node)) if (key !== "annotations") visit(child); } visit(value); return results; }
-
 export { DefGameRoom } from "./game-room";
-
 export default { async fetch(request: Request, env: Env): Promise<Response> {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders() });
   const url = new URL(request.url);
   if (url.pathname === "/game") return handleGame(request, env);
+  if (url.pathname === "/doom") return env.ASSETS.fetch(new Request(new URL("/doom.html", request.url), request));
   if (url.pathname === "/") return env.ASSETS.fetch(new Request(new URL("/index.html", request.url), request));
   if (url.pathname === "/usage" && request.method === "GET") return json({ success: true, uptimeSeconds: Math.floor((Date.now() - usage.started) / 1000), ...usage, rateLimit: RATE_LIMIT });
   if (!["/chat", "/web-search", "/generate-image", "/vision", "/tts"].includes(url.pathname)) return json({ success: false, error: "Not found" }, 404);
@@ -38,27 +35,9 @@ export default { async fetch(request: Request, env: Env): Promise<Response> {
   const validationError = validateRequest(request); if (validationError) return json({ success: false, error: validationError }, 413);
   const rate = checkRateLimit(request); if (!rate.ok) return json({ success: false, error: "Too many requests. Please slow down.", retryAfter: rate.retryAfter }, 429, { "retry-after": String(rate.retryAfter) });
   usage.requests++;
-  try {
-    if (url.pathname === "/chat") { usage.chat++; return await handleChat(request, env, url.searchParams.get("stream") === "1"); }
-    if (url.pathname === "/web-search") { usage.web++; return await handleWebSearch(request, env); }
-    if (url.pathname === "/vision") { usage.vision++; return await handleVision(request, env); }
-    if (url.pathname === "/tts") { usage.tts++; return await handleTts(request, env); }
-    usage.image++; return await handleImage(request, env);
-  } catch (error) { usage.errors++; console.error("defgodqe worker error", error); return json({ success: false, error: "The AI service encountered an internal error." }, 500); }
+  try { if (url.pathname === "/chat") { usage.chat++; return await handleChat(request, env, url.searchParams.get("stream") === "1"); } if (url.pathname === "/web-search") { usage.web++; return await handleWebSearch(request, env); } if (url.pathname === "/vision") { usage.vision++; return await handleVision(request, env); } if (url.pathname === "/tts") { usage.tts++; return await handleTts(request, env); } usage.image++; return await handleImage(request, env); } catch (error) { usage.errors++; console.error("defgodqe worker error", error); return json({ success: false, error: "The AI service encountered an internal error." }, 500); }
 } } satisfies ExportedHandler<Env>;
-
-function handleGame(request: Request, env: Env): Promise<Response> | Response {
-  if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
-    return env.ASSETS.fetch(new Request(new URL("/game.html", request.url), request));
-  }
-  const url = new URL(request.url);
-  const supplied = (url.searchParams.get("room") || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
-  const room = supplied || crypto.randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase();
-  url.searchParams.set("room", room);
-  const id = env.GAME_ROOMS.idFromName(room);
-  return env.GAME_ROOMS.get(id).fetch(new Request(url.toString(), request));
-}
-
+function handleGame(request: Request, env: Env): Promise<Response> | Response { if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") return env.ASSETS.fetch(new Request(new URL("/game.html", request.url), request)); const url = new URL(request.url); const supplied = (url.searchParams.get("room") || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6); const room = supplied || crypto.randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase(); url.searchParams.set("room", room); const id = env.GAME_ROOMS.idFromName(room); return env.GAME_ROOMS.get(id).fetch(new Request(url.toString(), request)); }
 async function handleChat(request: Request, env: Env, stream: boolean) { const body = (await request.json()) as { messages?: unknown }, messages = normalizeMessages(body.messages); if (!messages.length) return json({ success: false, error: "At least one message is required." }, 400); if (!messages.some((message) => message.role === "system")) messages.unshift({ role: "system", content: SYSTEM_PROMPT }); const result = await env.AI.run(CHAT_MODEL, { messages, max_tokens: MAX_TOKENS, temperature: 0.65, top_p: 0.9, stream } as any); if (stream) return new Response(result as ReadableStream, { status: 200, headers: { ...baseHeaders(), "content-type": "text/event-stream; charset=utf-8", connection: "keep-alive" } }); return json({ success: true, response: extractText(result) || String((result as any)?.response || "") }); }
 async function handleWebSearch(request: Request, env: Env) { const body = (await request.json()) as { query?: unknown }, query = String(body.query || "").trim().slice(0, 4000); if (!query) return json({ success: false, error: "A search query is required." }, 400); const result = await env.AI.run("openai/gpt-4o-mini", { input: `Search the live web for this query and answer accurately: ${query}\n\nUse current web information. Cite claims with the web results. Never invent URLs or sources.`, max_output_tokens: 2048, tools: [{ type: "web_search_preview" }] } as any, { gateway: { id: "default" } }); const response = extractText(result); return json({ success: Boolean(response), response, sources: extractSources(result) }); }
 async function handleVision(request: Request, env: Env) { const body = (await request.json()) as { prompt?: unknown; image?: unknown }, prompt = String(body.prompt || "Describe and analyze this image accurately.").trim().slice(0, 4000), image = String(body.image || "").trim(); if (!image) return json({ success: false, error: "An image is required." }, 400); if (image.length > 10_000_000) return json({ success: false, error: "Image is too large." }, 413); const rawImage = image.startsWith("data:") && image.includes(",") ? image.split(",", 2)[1] : image; const result = await env.AI.run(VISION_MODEL, { prompt, image: rawImage, max_tokens: MAX_TOKENS, temperature: 0.4 } as any); return json({ success: true, response: extractText(result) || String((result as any)?.response || "") }); }
