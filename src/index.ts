@@ -2,7 +2,7 @@ import { Env, ChatMessage } from "./types";
 
 const CHAT_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast";
 const VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
-const TTS_MODEL = "@cf/deegram/aura-2-en";
+const TTS_MODEL = "@cf/deepgram/aura-2-en";
 const IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell";
 const MAX_BODY_BYTES = 120_000;
 const MAX_MESSAGES = 32;
@@ -27,7 +27,6 @@ export default { async fetch(request: Request, env: Env): Promise<Response> {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders() });
   const url = new URL(request.url);
   if (url.pathname === "/game") return handleGame(request, env);
-  if (url.pathname === "/doom") return env.ASSETS.fetch(new Request(new URL("/doom.html", request.url), request));
   if (url.pathname === "/") return env.ASSETS.fetch(new Request(new URL("/index.html", request.url), request));
   if (url.pathname === "/usage" && request.method === "GET") return json({ success: true, uptimeSeconds: Math.floor((Date.now() - usage.started) / 1000), ...usage, rateLimit: RATE_LIMIT });
   if (!["/chat", "/web-search", "/generate-image", "/vision", "/tts"].includes(url.pathname)) return json({ success: false, error: "Not found" }, 404);
