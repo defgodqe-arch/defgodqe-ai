@@ -31,7 +31,7 @@ export default { async fetch(request: Request, env: Env): Promise<Response> {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders() });
   const url = new URL(request.url);
   if (url.pathname === "/game") return handleGame(request, env);
-  if (url.pathname === "/") return json({ success: true, service: "defgodqe-ai", routes: ["/chat", "/web-search", "/generate-image", "/vision", "/tts", "/usage", "/game"] });
+  if (url.pathname === "/") return env.ASSETS.fetch(new Request(new URL("/index.html", request.url), request));
   if (url.pathname === "/usage" && request.method === "GET") return json({ success: true, uptimeSeconds: Math.floor((Date.now() - usage.started) / 1000), ...usage, rateLimit: RATE_LIMIT });
   if (!["/chat", "/web-search", "/generate-image", "/vision", "/tts"].includes(url.pathname)) return json({ success: false, error: "Not found" }, 404);
   if (request.method !== "POST") return json({ success: false, error: "Method not allowed" }, 405);
@@ -49,7 +49,7 @@ export default { async fetch(request: Request, env: Env): Promise<Response> {
 
 function handleGame(request: Request, env: Env): Promise<Response> | Response {
   if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
-    return json({ success: true, service: "defgodqe-neon-tag", websocket: "/game?room=ABC123&name=Player" });
+    return env.ASSETS.fetch(new Request(new URL("/game.html", request.url), request));
   }
   const url = new URL(request.url);
   const supplied = (url.searchParams.get("room") || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
