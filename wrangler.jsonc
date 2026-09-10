@@ -14,5 +14,13 @@
   "ai": {
     "binding": "AI"
   },
+  "durable_objects": {
+    "bindings": [
+      { "name": "GAME_ROOMS", "class_name": "DefGameRoom" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_classes": ["DefGameRoom"] }
+  ],
   "upload_source_maps": true
 }
