@@ -1,6 +1,6 @@
 import { Env, ChatMessage } from "./types";
 
-const CHAT_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast";
+const CHAT_MODEL = "alibaba/qwen3.5-397b-a17b";
 const VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
 const TTS_MODEL = "@cf/deepgram/aura-2-en";
 const IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell";
