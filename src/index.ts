@@ -86,12 +86,6 @@ async function handleTts(request: Request, env: Env) { const body = (await reque
 function msgpack(value: any): Uint8Array {
   const out: number[] = [];
   const put = (...bytes: number[]) => out.push(...bytes.map((b) => b & 255));
-  const len = (n: number, fixMax: number, fixBase: number, code8: number, code16: number, code32: number) => {
-    if (n <= fixMax) { put(fixBase | n); return; }
-    if (n <= 0xff) put(code8, n);
-    else if (n <= 0xffff) put(code16, n >> 8, n);
-    else put(code32, n >>> 24, n >>> 16, n >>> 8, n);
-  };
   const write = (v: any): void => {
     if (v === null || v === undefined) { put(0xc0); return; }
     if (v === false) { put(0xc2); return; }
@@ -133,6 +127,8 @@ function msgpack(value: any): Uint8Array {
   return new Uint8Array(out);
 }
 async function handleDramaStudio(request: Request, env: Env) {
+  const origin = request.headers.get("Origin");
+  if (origin && origin !== new URL(request.url).origin) return json({ success: false, error: "The voice studio API only accepts same-origin browser requests." }, 403, {}, request);
   if (!env.DRAMA3_URL || !env.DRAMA3_API_KEY) return json({ success: false, error: "Drama 3 is not configured on this Worker yet. Set DRAMA3_URL and the DRAMA3_API_KEY secret." }, 503, {}, request);
   const body = await request.json() as { text?: unknown; format?: unknown; reference_audio?: unknown; reference_text?: unknown; reference_speaker?: unknown; director_note?: unknown };
   let text = String(body.text || "").trim().slice(0, 6000);
