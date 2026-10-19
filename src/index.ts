@@ -134,7 +134,7 @@ async function handleDramaStudio(request: Request, env: Env) {
   let text = String(body.text || "").trim().slice(0, 6000);
   const note = String(body.director_note || "").trim().slice(0, 500);
   if (!text) return json({ success: false, error: "A scene script is required." }, 400, {}, request);
-  if (note) text = "Performance direction (do not speak this instruction): " + note + "\n\n" + text;
+  if (note) text = "Direction: " + note + "\nLine: " + text;
   const format = body.format === "mp3" || body.format === "opus" ? String(body.format) : "wav";
   const refs: any[] = [];
   if (body.reference_audio) {
