@@ -1,13 +1,13 @@
 import { Env, ChatMessage } from "./types";
 
-const CHAT_MODEL = "alibaba/qwen3.5-397b-a17b";
+const CHAT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
 const TTS_MODEL = "@cf/deepgram/aura-2-en";
 const IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell";
 const MAX_BODY_BYTES = 120_000;
 const MAX_MESSAGES = 32;
 const MAX_MESSAGE_CHARS = 12_000;
-const MAX_TOKENS = 1024;
+const MAX_TOKENS = 640;
 const RATE_WINDOW_MS = 60_000;
 const RATE_LIMIT = 30;
 const usage = { requests: 0, chat: 0, web: 0, vision: 0, image: 0, tts: 0, errors: 0, started: Date.now() };
@@ -58,7 +58,7 @@ async function handleChat(request: Request, env: Env, stream: boolean) {
   // Try the configured model first, then stable Workers AI models if it is unavailable
   // in this account/region. This prevents a retired or unsupported model ID from
   // taking the whole chat endpoint down.
-  const candidates = [...new Set([CHAT_MODEL, "@cf/meta/llama-3.3-70b-instruct-fp8-fast", "@cf/meta/llama-3.1-8b-instruct"])];
+  const candidates = [...new Set([CHAT_MODEL, "@cf/meta/llama-3.1-8b-instruct-fp8"])];
   let result: any = null;
   let lastError: unknown = null;
   for (const model of candidates) {
