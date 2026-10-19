@@ -40,6 +40,7 @@ export default { async fetch(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname === "/game") return handleGame(request, env);
   if (url.pathname === "/") return env.ASSETS.fetch(new Request(new URL("/index.html", request.url), request));
+  if (url.pathname === "/voice-studio.html" || url.pathname === "/voice-studio.js") return env.ASSETS.fetch(new Request(new URL(url.pathname, request.url), request));
   if (url.pathname === "/usage" && request.method === "GET") return json({ success: true, uptimeSeconds: Math.floor((Date.now() - usage.started) / 1000), ...usage, rateLimit: RATE_LIMIT });
   if (!["/chat", "/web-search", "/generate-image", "/vision", "/tts", "/studio/tts"].includes(url.pathname)) return json({ success: false, error: "Not found" }, 404, {}, request);
   if (request.method !== "POST") return json({ success: false, error: "Method not allowed" }, 405, {}, request);
