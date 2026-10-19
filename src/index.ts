@@ -49,7 +49,35 @@ export default { async fetch(request: Request, env: Env): Promise<Response> {
   try { if (url.pathname === "/chat") { usage.chat++; return await handleChat(request, env, url.searchParams.get("stream") === "1"); } if (url.pathname === "/web-search") { usage.web++; return await handleWebSearch(request, env); } if (url.pathname === "/vision") { usage.vision++; return await handleVision(request, env); } if (url.pathname === "/tts") { usage.tts++; return await handleTts(request, env); } usage.image++; return await handleImage(request, env); } catch (error) { usage.errors++; console.error("defgodqe worker error", error); return json({ success: false, error: "The AI service encountered an internal error." }, 500, {}, request); }
 } } satisfies ExportedHandler<Env>;
 function handleGame(request: Request, env: Env): Promise<Response> | Response { if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") return env.ASSETS.fetch(new Request(new URL("/game.html", request.url), request)); const url = new URL(request.url); const supplied = (url.searchParams.get("room") || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6); const room = supplied || crypto.randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase(); url.searchParams.set("room", room); const id = env.GAME_ROOMS.idFromName(room); return env.GAME_ROOMS.get(id).fetch(new Request(url.toString(), request)); }
-async function handleChat(request: Request, env: Env, stream: boolean) { const body = (await request.json()) as { messages?: unknown }, messages = normalizeMessages(body.messages); if (!messages.length) return json({ success: false, error: "At least one message is required." }, 400); if (!messages.some((message) => message.role === "system")) messages.unshift({ role: "system", content: SYSTEM_PROMPT }); const result = await env.AI.run(CHAT_MODEL, { messages, max_tokens: MAX_TOKENS, temperature: 0.65, top_p: 0.9, stream } as any); if (stream) return new Response(result as ReadableStream, { status: 200, headers: { ...baseHeaders(), "content-type": "text/event-stream; charset=utf-8", connection: "keep-alive" } }); return json({ success: true, response: extractText(result) || String((result as any)?.response || "") }); }
+async function handleChat(request: Request, env: Env, stream: boolean) {
+  const body = (await request.json()) as { messages?: unknown };
+  const messages = normalizeMessages(body.messages);
+  if (!messages.length) return json({ success: false, error: "At least one message is required." }, 400, {}, request);
+  if (!messages.some((message) => message.role === "system")) messages.unshift({ role: "system", content: SYSTEM_PROMPT });
+  // Try the configured model first, then stable Workers AI models if it is unavailable
+  // in this account/region. This prevents a retired or unsupported model ID from
+  // taking the whole chat endpoint down.
+  const candidates = [...new Set([CHAT_MODEL, "@cf/meta/llama-3.3-70b-instruct-fp8-fast", "@cf/meta/llama-3.1-8b-instruct"])];
+  let result: any = null;
+  let lastError: unknown = null;
+  for (const model of candidates) {
+    try {
+      result = await env.AI.run(model, { messages, max_tokens: MAX_TOKENS, temperature: 0.65, top_p: 0.9, stream } as any);
+      if (result) break;
+    } catch (error) {
+      lastError = error;
+      console.error("Workers AI model failed", model, error);
+    }
+  }
+  if (!result) {
+    const detail = lastError instanceof Error ? lastError.message.slice(0, 240) : "No model returned a response.";
+    return json({ success: false, error: "AI inference failed. " + detail }, 502, {}, request);
+  }
+  if (stream) return new Response(result as ReadableStream, { status: 200, headers: { ...corsHeaders(request), "content-type": "text/event-stream; charset=utf-8", connection: "keep-alive" } });
+  const response = extractText(result) || String(result?.response || "");
+  if (!response) return json({ success: false, error: "The AI model returned an empty response." }, 502, {}, request);
+  return json({ success: true, response }, 200, {}, request);
+}
 async function handleWebSearch(request: Request, env: Env) { const body = (await request.json()) as { query?: unknown }, query = String(body.query || "").trim().slice(0, 4000); if (!query) return json({ success: false, error: "A search query is required." }, 400); const result = await env.AI.run("openai/gpt-4o-mini", { input: `Search the live web for this query and answer accurately: ${query}\n\nUse current web information. Cite claims with the web results. Never invent URLs or sources.`, max_output_tokens: 2048, tools: [{ type: "web_search_preview" }] } as any, { gateway: { id: "default" } }); const response = extractText(result); return json({ success: Boolean(response), response, sources: extractSources(result) }); }
 async function handleVision(request: Request, env: Env) { const body = (await request.json()) as { prompt?: unknown; image?: unknown }, prompt = String(body.prompt || "Describe and analyze this image accurately.").trim().slice(0, 4000), image = String(body.image || "").trim(); if (!image) return json({ success: false, error: "An image is required." }, 400); if (image.length > 10_000_000) return json({ success: false, error: "Image is too large." }, 413); const rawImage = image.startsWith("data:") && image.includes(",") ? image.split(",", 2)[1] : image; const result = await env.AI.run(VISION_MODEL, { prompt, image: rawImage, max_tokens: MAX_TOKENS, temperature: 0.4 } as any); return json({ success: true, response: extractText(result) || String((result as any)?.response || "") }); }
 async function handleTts(request: Request, env: Env) { const body = (await request.json()) as { text?: unknown; speaker?: unknown }, text = String(body.text || "").trim().slice(0, 5000); const allowed = new Set(["amalthea","andromeda","apollo","arcas","aries","asteria","athena","atlas","aurora","callista","cora","cordelia","delia","draco","electra","harmonia","helena","hera","hermes","hyperion","iris","janus","juno","jupiter","luna","mars","minerva","neptune","odysseus","ophelia","orion","orpheus","pandora","phoebe","pluto","saturn","thalia","theia","vesta","zeus"]); const speaker = allowed.has(String(body.speaker || "luna")) ? String(body.speaker || "luna") : "luna"; if (!text) return json({ success: false, error: "Text is required." }, 400); const audio = await env.AI.run(TTS_MODEL, { text, speaker, encoding: "mp3" } as any); return new Response(audio as ReadableStream, { status: 200, headers: { ...baseHeaders(), "content-type": "audio/mpeg", "content-disposition": "inline" } }); }
