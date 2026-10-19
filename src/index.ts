@@ -13,8 +13,20 @@ const RATE_LIMIT = 30;
 const usage = { requests: 0, chat: 0, web: 0, vision: 0, image: 0, tts: 0, errors: 0, started: Date.now() };
 const SYSTEM_PROMPT = `You are defgodqe, an advanced AI assistant.\nYour name is defgodqe.\nNever claim to be ChatGPT or another AI.\nYour tagline is "Your AI. Your Ideas. Your World.".\nBe helpful, accurate, creative, concise and honest.\nNever fabricate facts, sources, URLs, actions or files.\nWhen giving code, make it complete and runnable whenever practical.`;
 const rateBuckets = new Map<string, { count: number; reset: number }>();
-function corsHeaders(): HeadersInit { return { "access-control-allow-origin": "*", "access-control-allow-methods": "GET,POST,OPTIONS", "access-control-allow-headers": "Content-Type, X-Defgodqe-Client, X-Turnstile-Token", "access-control-max-age": "86400" }; }
-function json(data: unknown, status = 200, extra: HeadersInit = {}) { return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", ...corsHeaders(), ...extra } }); }
+function corsHeaders(request?: Request): HeadersInit {
+  const origin = request?.headers.get("Origin");
+  // GitHub Pages and the standalone worker UI are cross-origin clients.
+  // This API does not use cookies, so wildcard access is appropriate.
+  const allowedOrigin = origin && (origin === "https://defgodqe-arch.github.io" || origin === "https://ai.defgodqe.workers.dev" || origin === "http://localhost:5173" || origin === "http://127.0.0.1:5173") ? origin : "*";
+  return {
+    "access-control-allow-origin": allowedOrigin,
+    "access-control-allow-methods": "GET, POST, OPTIONS",
+    "access-control-allow-headers": "Content-Type, X-Defgodqe-Client, X-Turnstile-Token",
+    "access-control-max-age": "86400",
+    "vary": "Origin"
+  };
+}
+function json(data: unknown, status = 200, extra: HeadersInit = {}, request?: Request) { return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", ...corsHeaders(request), ...extra } }); }
 function getClientKey(request: Request) { return request.headers.get("X-Defgodqe-Client") || "anonymous"; }
 function checkRateLimit(request: Request) { const key = getClientKey(request), now = Date.now(), existing = rateBuckets.get(key); if (!existing || existing.reset <= now) { rateBuckets.set(key, { count: 1, reset: now + RATE_WINDOW_MS }); return { ok: true, retryAfter: 0 }; } existing.count += 1; if (existing.count > RATE_LIMIT) return { ok: false, retryAfter: Math.ceil((existing.reset - now) / 1000) }; return { ok: true, retryAfter: 0 }; }
 function validateRequest(request: Request) { const contentLength = Number(request.headers.get("content-length") || 0); return contentLength > MAX_BODY_BYTES ? "Request body is too large." : null; }
@@ -24,17 +36,17 @@ function extractText(value: any): string { if (!value) return ""; if (typeof val
 function extractSources(value: any) { const results: Array<{ title: string; url: string; domain: string }> = [], seen = new Set<string>(); function visit(node: any) { if (!node || results.length >= 8) return; if (Array.isArray(node)) { for (const item of node) visit(item); return; } if (typeof node !== "object") return; for (const annotation of Array.isArray(node.annotations) ? node.annotations : []) { if (annotation?.type !== "url_citation") continue; const url = String(annotation?.url || annotation?.citation?.url || "").trim(); if (!/^https?:\/\//i.test(url) || seen.has(url)) continue; seen.add(url); let domain = ""; try { domain = new URL(url).hostname.replace(/^www\./, ""); } catch {} results.push({ title: String(annotation?.title || annotation?.citation?.title || domain || url), url, domain }); } for (const [key, child] of Object.entries(node)) if (key !== "annotations") visit(child); } visit(value); return results; }
 export { DefGameRoom } from "./game-room";
 export default { async fetch(request: Request, env: Env): Promise<Response> {
-  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders() });
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
   const url = new URL(request.url);
   if (url.pathname === "/game") return handleGame(request, env);
   if (url.pathname === "/") return env.ASSETS.fetch(new Request(new URL("/index.html", request.url), request));
   if (url.pathname === "/usage" && request.method === "GET") return json({ success: true, uptimeSeconds: Math.floor((Date.now() - usage.started) / 1000), ...usage, rateLimit: RATE_LIMIT });
-  if (!["/chat", "/web-search", "/generate-image", "/vision", "/tts"].includes(url.pathname)) return json({ success: false, error: "Not found" }, 404);
-  if (request.method !== "POST") return json({ success: false, error: "Method not allowed" }, 405);
-  const validationError = validateRequest(request); if (validationError) return json({ success: false, error: validationError }, 413);
-  const rate = checkRateLimit(request); if (!rate.ok) return json({ success: false, error: "Too many requests. Please slow down.", retryAfter: rate.retryAfter }, 429, { "retry-after": String(rate.retryAfter) });
+  if (!["/chat", "/web-search", "/generate-image", "/vision", "/tts"].includes(url.pathname)) return json({ success: false, error: "Not found" }, 404, {}, request);
+  if (request.method !== "POST") return json({ success: false, error: "Method not allowed" }, 405, {}, request);
+  const validationError = validateRequest(request); if (validationError) return json({ success: false, error: validationError }, 413, {}, request);
+  const rate = checkRateLimit(request); if (!rate.ok) return json({ success: false, error: "Too many requests. Please slow down.", retryAfter: rate.retryAfter }, 429, { "retry-after": String(rate.retryAfter) }, request);
   usage.requests++;
-  try { if (url.pathname === "/chat") { usage.chat++; return await handleChat(request, env, url.searchParams.get("stream") === "1"); } if (url.pathname === "/web-search") { usage.web++; return await handleWebSearch(request, env); } if (url.pathname === "/vision") { usage.vision++; return await handleVision(request, env); } if (url.pathname === "/tts") { usage.tts++; return await handleTts(request, env); } usage.image++; return await handleImage(request, env); } catch (error) { usage.errors++; console.error("defgodqe worker error", error); return json({ success: false, error: "The AI service encountered an internal error." }, 500); }
+  try { if (url.pathname === "/chat") { usage.chat++; return await handleChat(request, env, url.searchParams.get("stream") === "1"); } if (url.pathname === "/web-search") { usage.web++; return await handleWebSearch(request, env); } if (url.pathname === "/vision") { usage.vision++; return await handleVision(request, env); } if (url.pathname === "/tts") { usage.tts++; return await handleTts(request, env); } usage.image++; return await handleImage(request, env); } catch (error) { usage.errors++; console.error("defgodqe worker error", error); return json({ success: false, error: "The AI service encountered an internal error." }, 500, {}, request); }
 } } satisfies ExportedHandler<Env>;
 function handleGame(request: Request, env: Env): Promise<Response> | Response { if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") return env.ASSETS.fetch(new Request(new URL("/game.html", request.url), request)); const url = new URL(request.url); const supplied = (url.searchParams.get("room") || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6); const room = supplied || crypto.randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase(); url.searchParams.set("room", room); const id = env.GAME_ROOMS.idFromName(room); return env.GAME_ROOMS.get(id).fetch(new Request(url.toString(), request)); }
 async function handleChat(request: Request, env: Env, stream: boolean) { const body = (await request.json()) as { messages?: unknown }, messages = normalizeMessages(body.messages); if (!messages.length) return json({ success: false, error: "At least one message is required." }, 400); if (!messages.some((message) => message.role === "system")) messages.unshift({ role: "system", content: SYSTEM_PROMPT }); const result = await env.AI.run(CHAT_MODEL, { messages, max_tokens: MAX_TOKENS, temperature: 0.65, top_p: 0.9, stream } as any); if (stream) return new Response(result as ReadableStream, { status: 200, headers: { ...baseHeaders(), "content-type": "text/event-stream; charset=utf-8", connection: "keep-alive" } }); return json({ success: true, response: extractText(result) || String((result as any)?.response || "") }); }
