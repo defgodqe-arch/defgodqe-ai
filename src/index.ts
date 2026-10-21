@@ -1,6 +1,7 @@
 import { Env, ChatMessage } from "./types";
 
 const CHAT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+const HF_CHAT_MODEL = "Qwen/Qwen3-4B";
 const VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
 const TTS_MODEL = "@cf/deepgram/aura-2-en";
 const IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell";
@@ -55,9 +56,34 @@ async function handleChat(request: Request, env: Env, stream: boolean) {
   const messages = normalizeMessages(body.messages);
   if (!messages.length) return json({ success: false, error: "At least one message is required." }, 400, {}, request);
   if (!messages.some((message) => message.role === "system")) messages.unshift({ role: "system", content: SYSTEM_PROMPT });
-  // Try the configured model first, then stable Workers AI models if it is unavailable
-  // in this account/region. This prevents a retired or unsupported model ID from
-  // taking the whole chat endpoint down.
+  // Prefer Hugging Face's fast provider router when HF_TOKEN is configured.
+  // The token stays in the Worker secret store; it is never sent to the browser.
+  if (!stream && env.HF_TOKEN) {
+    try {
+      const hf = await fetch("https://router.huggingface.co/v1/chat/completions", {
+        method: "POST",
+        headers: { "Authorization": "Bearer " + env.HF_TOKEN, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: env.HF_MODEL || HF_CHAT_MODEL + ":fastest",
+          messages,
+          max_tokens: MAX_TOKENS,
+          temperature: 0.65,
+          top_p: 0.9
+        })
+      });
+      if (hf.ok) {
+        const payload: any = await hf.json();
+        const response = String(payload?.choices?.[0]?.message?.content || "").trim();
+        if (response) return json({ success: true, response, model: env.HF_MODEL || HF_CHAT_MODEL + ":fastest", provider: "huggingface" }, 200, {}, request);
+        console.error("Hugging Face returned an empty response");
+      } else {
+        console.error("Hugging Face inference failed", hf.status, (await hf.text()).slice(0, 240));
+      }
+    } catch (error) {
+      console.error("Hugging Face inference request failed", error);
+    }
+  }
+  // Fallback keeps chat available if HF is not configured or its provider is temporarily unavailable.
   const candidates = [...new Set([CHAT_MODEL, "@cf/meta/llama-3.1-8b-instruct-fp8"])];
   let result: any = null;
   let lastError: unknown = null;
@@ -77,7 +103,7 @@ async function handleChat(request: Request, env: Env, stream: boolean) {
   if (stream) return new Response(result as ReadableStream, { status: 200, headers: { ...corsHeaders(request), "content-type": "text/event-stream; charset=utf-8", connection: "keep-alive" } });
   const response = extractText(result) || String(result?.response || "");
   if (!response) return json({ success: false, error: "The AI model returned an empty response." }, 502, {}, request);
-  return json({ success: true, response }, 200, {}, request);
+  return json({ success: true, response, provider: "cloudflare" }, 200, {}, request);
 }
 async function handleWebSearch(request: Request, env: Env) { const body = (await request.json()) as { query?: unknown }, query = String(body.query || "").trim().slice(0, 4000); if (!query) return json({ success: false, error: "A search query is required." }, 400); const result = await env.AI.run("openai/gpt-4o-mini", { input: `Search the live web for this query and answer accurately: ${query}\n\nUse current web information. Cite claims with the web results. Never invent URLs or sources.`, max_output_tokens: 2048, tools: [{ type: "web_search_preview" }] } as any, { gateway: { id: "default" } }); const response = extractText(result); return json({ success: Boolean(response), response, sources: extractSources(result) }); }
 async function handleVision(request: Request, env: Env) { const body = (await request.json()) as { prompt?: unknown; image?: unknown }, prompt = String(body.prompt || "Describe and analyze this image accurately.").trim().slice(0, 4000), image = String(body.image || "").trim(); if (!image) return json({ success: false, error: "An image is required." }, 400); if (image.length > 10_000_000) return json({ success: false, error: "Image is too large." }, 413); const rawImage = image.startsWith("data:") && image.includes(",") ? image.split(",", 2)[1] : image; const result = await env.AI.run(VISION_MODEL, { prompt, image: rawImage, max_tokens: MAX_TOKENS, temperature: 0.4 } as any); return json({ success: true, response: extractText(result) || String((result as any)?.response || "") }); }
