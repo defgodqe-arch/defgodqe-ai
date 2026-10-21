@@ -6,6 +6,7 @@ const VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
 const TTS_MODEL = "@cf/deepgram/aura-2-en";
 const IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell";
 const MAX_BODY_BYTES = 120_000;
+const MAX_AUDIO_BYTES = 15_000_000;
 const MAX_MESSAGES = 32;
 const MAX_MESSAGE_CHARS = 12_000;
 const MAX_TOKENS = 640;
@@ -43,12 +44,12 @@ export default { async fetch(request: Request, env: Env): Promise<Response> {
   if (url.pathname === "/") return env.ASSETS.fetch(new Request(new URL("/index.html", request.url), request));
   if (url.pathname === "/voice-studio.html" || url.pathname === "/voice-studio.js") return env.ASSETS.fetch(new Request(new URL(url.pathname, request.url), request));
   if (url.pathname === "/usage" && request.method === "GET") return json({ success: true, uptimeSeconds: Math.floor((Date.now() - usage.started) / 1000), ...usage, rateLimit: RATE_LIMIT });
-  if (!["/chat", "/web-search", "/generate-image", "/vision", "/tts", "/studio/tts"].includes(url.pathname)) return json({ success: false, error: "Not found" }, 404, {}, request);
+  if (!["/chat", "/web-search", "/generate-image", "/vision", "/tts", "/studio/tts", "/transcribe"].includes(url.pathname)) return json({ success: false, error: "Not found" }, 404, {}, request);
   if (request.method !== "POST") return json({ success: false, error: "Method not allowed" }, 405, {}, request);
-  const validationError = validateRequest(request, url.pathname === "/studio/tts" ? 18_000_000 : MAX_BODY_BYTES); if (validationError) return json({ success: false, error: validationError }, 413, {}, request);
+  const validationError = validateRequest(request, url.pathname === "/studio/tts" ? 18_000_000 : url.pathname === "/transcribe" ? MAX_AUDIO_BYTES + 100_000 : MAX_BODY_BYTES); if (validationError) return json({ success: false, error: validationError }, 413, {}, request);
   const rate = checkRateLimit(request); if (!rate.ok) return json({ success: false, error: "Too many requests. Please slow down.", retryAfter: rate.retryAfter }, 429, { "retry-after": String(rate.retryAfter) }, request);
   usage.requests++;
-  try { if (url.pathname === "/chat") { usage.chat++; return await handleChat(request, env, url.searchParams.get("stream") === "1"); } if (url.pathname === "/web-search") { usage.web++; return await handleWebSearch(request, env); } if (url.pathname === "/vision") { usage.vision++; return await handleVision(request, env); } if (url.pathname === "/tts") { usage.tts++; return await handleTts(request, env); } if (url.pathname === "/studio/tts") { usage.tts++; return await handleDramaStudio(request, env); } usage.image++; return await handleImage(request, env); } catch (error) { usage.errors++; console.error("defgodqe worker error", error); return json({ success: false, error: "The AI service encountered an internal error." }, 500, {}, request); }
+  try { if (url.pathname === "/chat") { usage.chat++; return await handleChat(request, env, url.searchParams.get("stream") === "1"); } if (url.pathname === "/web-search") { usage.web++; return await handleWebSearch(request, env); } if (url.pathname === "/vision") { usage.vision++; return await handleVision(request, env); } if (url.pathname === "/tts") { usage.tts++; return await handleTts(request, env); } if (url.pathname === "/transcribe") return await handleTranscribe(request, env); if (url.pathname === "/studio/tts") { usage.tts++; return await handleDramaStudio(request, env); } usage.image++; return await handleImage(request, env); } catch (error) { usage.errors++; console.error("defgodqe worker error", error); return json({ success: false, error: "The AI service encountered an internal error." }, 500, {}, request); }
 } } satisfies ExportedHandler<Env>;
 function handleGame(request: Request, env: Env): Promise<Response> | Response { if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") return env.ASSETS.fetch(new Request(new URL("/game.html", request.url), request)); const url = new URL(request.url); const supplied = (url.searchParams.get("room") || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6); const room = supplied || crypto.randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase(); url.searchParams.set("room", room); const id = env.GAME_ROOMS.idFromName(room); return env.GAME_ROOMS.get(id).fetch(new Request(url.toString(), request)); }
 async function handleChat(request: Request, env: Env, stream: boolean) {
@@ -107,6 +108,34 @@ async function handleChat(request: Request, env: Env, stream: boolean) {
 }
 async function handleWebSearch(request: Request, env: Env) { const body = (await request.json()) as { query?: unknown }, query = String(body.query || "").trim().slice(0, 4000); if (!query) return json({ success: false, error: "A search query is required." }, 400); const result = await env.AI.run("openai/gpt-4o-mini", { input: `Search the live web for this query and answer accurately: ${query}\n\nUse current web information. Cite claims with the web results. Never invent URLs or sources.`, max_output_tokens: 2048, tools: [{ type: "web_search_preview" }] } as any, { gateway: { id: "default" } }); const response = extractText(result); return json({ success: Boolean(response), response, sources: extractSources(result) }); }
 async function handleVision(request: Request, env: Env) { const body = (await request.json()) as { prompt?: unknown; image?: unknown }, prompt = String(body.prompt || "Describe and analyze this image accurately.").trim().slice(0, 4000), image = String(body.image || "").trim(); if (!image) return json({ success: false, error: "An image is required." }, 400); if (image.length > 10_000_000) return json({ success: false, error: "Image is too large." }, 413); const rawImage = image.startsWith("data:") && image.includes(",") ? image.split(",", 2)[1] : image; const result = await env.AI.run(VISION_MODEL, { prompt, image: rawImage, max_tokens: MAX_TOKENS, temperature: 0.4 } as any); return json({ success: true, response: extractText(result) || String((result as any)?.response || "") }); }
+async function handleTranscribe(request: Request, env: Env) {
+  if (!env.HF_TOKEN) return json({ success: false, error: "Whisper transcription is not configured. Add the HF_TOKEN Worker secret." }, 503, {}, request);
+  const form = await request.formData();
+  const file = form.get("audio");
+  const language = String(form.get("language") || "auto");
+  if (!(file instanceof File)) return json({ success: false, error: "An audio recording is required." }, 400, {}, request);
+  if (file.size <= 0) return json({ success: false, error: "The audio recording is empty." }, 400, {}, request);
+  if (file.size > MAX_AUDIO_BYTES) return json({ success: false, error: "Audio must be 15 MB or smaller." }, 413, {}, request);
+  try {
+    const upstream = await fetch("https://router.huggingface.co/hf-inference/models/openai/whisper-large-v3", {
+      method: "POST",
+      headers: { "Authorization": "Bearer " + env.HF_TOKEN, "Content-Type": file.type || "audio/webm", "Accept": "application/json" },
+      body: await file.arrayBuffer()
+    });
+    const payload: any = await upstream.json().catch(() => ({}));
+    if (!upstream.ok) {
+      console.error("Whisper inference failed", upstream.status, JSON.stringify(payload).slice(0, 300));
+      return json({ success: false, error: upstream.status === 503 ? "Whisper is loading. Please try again in a moment." : "Whisper transcription failed. Check the Hugging Face token and model access." }, 502, {}, request);
+    }
+    const transcript = String(payload?.text || payload?.[0]?.text || "").trim();
+    if (!transcript) return json({ success: false, error: "Whisper did not detect any speech." }, 422, {}, request);
+    return json({ success: true, text: transcript, model: "openai/whisper-large-v3", language }, 200, {}, request);
+  } catch (error) {
+    console.error("Whisper request failed", error);
+    return json({ success: false, error: "Could not connect to Whisper transcription." }, 502, {}, request);
+  }
+}
+
 async function handleTts(request: Request, env: Env) { const body = (await request.json()) as { text?: unknown; speaker?: unknown }, text = String(body.text || "").trim().slice(0, 5000); const allowed = new Set(["amalthea","andromeda","apollo","arcas","aries","asteria","athena","atlas","aurora","callista","cora","cordelia","delia","draco","electra","harmonia","helena","hera","hermes","hyperion","iris","janus","juno","jupiter","luna","mars","minerva","neptune","odysseus","ophelia","orion","orpheus","pandora","phoebe","pluto","saturn","thalia","theia","vesta","zeus"]); const speaker = allowed.has(String(body.speaker || "luna")) ? String(body.speaker || "luna") : "luna"; if (!text) return json({ success: false, error: "Text is required." }, 400); const audio = await env.AI.run(TTS_MODEL, { text, speaker, encoding: "mp3" } as any); return new Response(audio as ReadableStream, { status: 200, headers: { ...baseHeaders(), "content-type": "audio/mpeg", "content-disposition": "inline" } }); }
 
 function msgpack(value: any): Uint8Array {
