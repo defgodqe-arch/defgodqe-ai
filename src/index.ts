@@ -15,17 +15,14 @@ const RATE_LIMIT = 30;
 const usage = { requests: 0, chat: 0, web: 0, vision: 0, image: 0, tts: 0, errors: 0, started: Date.now() };
 const SYSTEM_PROMPT = `You are defgodqe, an advanced AI assistant created by defgodqe.\nYour name is defgodqe.\nIf asked who created you, who made you, or who your creator is, clearly answer: "I was created by defgodqe." Do not claim another person or company created you.\nNever claim to be ChatGPT or another AI.\nYour tagline is "Your AI. Your Ideas. Your World.".\nSupport fluent English and Spanish. Reply in the same language as the user unless they request another language. For voice responses, use natural, concise spoken phrasing. Be helpful, accurate, creative, concise and honest.\nNever fabricate facts, sources, URLs, actions or files.\nWhen giving code, make it complete and runnable whenever practical.`
 const rateBuckets = new Map<string, { count: number; reset: number }>();
-function corsHeaders(request?: Request): HeadersInit {
-  const origin = request?.headers.get("Origin");
-  // GitHub Pages and the standalone worker UI are cross-origin clients.
-  // This API does not use cookies, so wildcard access is appropriate.
-  const allowedOrigin = origin && (origin === "https://defgodqe-arch.github.io" || origin === "https://ai.defgodqe.workers.dev" || origin === "http://localhost:5173" || origin === "http://127.0.0.1:5173") ? origin : "*";
+function corsHeaders(_request?: Request): HeadersInit {
+  // Public AI API: browser clients on GitHub Pages and other frontends do not
+  // use cookie credentials, so always return a consistent wildcard CORS policy.
   return {
-    "access-control-allow-origin": allowedOrigin,
+    "access-control-allow-origin": "*",
     "access-control-allow-methods": "GET, POST, OPTIONS",
     "access-control-allow-headers": "Content-Type, X-Defgodqe-Client, X-Turnstile-Token",
-    "access-control-max-age": "86400",
-    "vary": "Origin"
+    "access-control-max-age": "86400"
   };
 }
 function json(data: unknown, status = 200, extra: HeadersInit = {}, request?: Request) { return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", ...corsHeaders(request), ...extra } }); }
