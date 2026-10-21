@@ -151,3 +151,18 @@ The UI styling is contained in the `<style>` section of `public/index.html`. You
 - [Cloudflare Workers Documentation](https://developers.cloudflare.com/workers/)
 - [Cloudflare Workers AI Documentation](https://developers.cloudflare.com/workers-ai/)
 - [Workers AI Models](https://developers.cloudflare.com/workers-ai/models/)
+
+## Hugging Face model for defchat AI
+
+The native AI panel in defchat can use Hugging Face Inference Providers with **Qwen/Qwen3-4B** (multilingual, including English and Spanish). It uses the provider router's `:fastest` policy and automatically falls back to Cloudflare Workers AI if Hugging Face is not configured or temporarily fails. The browser never receives the Hugging Face token.
+
+To enable it on the deployed Worker:
+
+1. Create a Hugging Face access token with permission to use Inference Providers at [Hugging Face Settings → Access Tokens](https://huggingface.co/settings/tokens).
+2. In the Cloudflare dashboard, open the **defgodqe AI** Worker at `ai.defgodqe.workers.dev`.
+3. Open **Settings → Variables and Secrets → Add** and add `HF_TOKEN` as an encrypted **Secret**. Never put this token in frontend code, GitHub files, or a `VITE_*` variable.
+4. Optionally add `HF_MODEL` as a regular variable to override the default `Qwen/Qwen3-4B:fastest` model.
+5. Redeploy/restart the Worker if the dashboard prompts you to.
+
+The AI panel supports **Auto**, **English**, and **Español** voice language settings. English replies use the configured server TTS when available. Spanish replies use a Spanish voice installed in the user's browser/device, because the current server TTS model is English-only. For a consistent premium Spanish voice on every device, deploy a multilingual TTS model behind a server-side endpoint and keep any credentials in Worker secrets.
+
