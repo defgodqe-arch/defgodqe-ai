@@ -184,39 +184,43 @@ function msgpack(value: any): Uint8Array {
 async function handleDramaStudio(request: Request, env: Env) {
   const origin = request.headers.get("Origin");
   if (origin && origin !== new URL(request.url).origin) return json({ success: false, error: "The voice studio API only accepts same-origin browser requests." }, 403, {}, request);
-  if (!env.DRAMA3_URL || !env.DRAMA3_API_KEY) return json({ success: false, error: "Drama 3 is not configured on this Worker yet. Set DRAMA3_URL and the DRAMA3_API_KEY secret." }, 503, {}, request);
-  const body = await request.json() as { text?: unknown; format?: unknown; reference_audio?: unknown; reference_text?: unknown; reference_speaker?: unknown; director_note?: unknown };
+  const apiKey = env.FISH_AUDIO_API_KEY || env.DRAMA3_API_KEY;
+  if (!apiKey) return json({ success: false, error: "Fish Audio is not configured. Add the FISH_AUDIO_API_KEY secret to this Cloudflare Worker." }, 503, {}, request);
+  const body = await request.json() as { text?: unknown; format?: unknown; reference_id?: unknown; director_note?: unknown };
   let text = String(body.text || "").trim().slice(0, 6000);
   const note = String(body.director_note || "").trim().slice(0, 500);
   if (!text) return json({ success: false, error: "A scene script is required." }, 400, {}, request);
-  if (note) text = "Direction: " + note + "\nLine: " + text;
-  const format = body.format === "mp3" || body.format === "opus" ? String(body.format) : "wav";
-  const refs: any[] = [];
-  if (body.reference_audio) {
-    const encoded = String(body.reference_audio);
-    if (encoded.length > 16_800_000) return json({ success: false, error: "Reference audio must be 12 MB or smaller." }, 413, {}, request);
-    let audio: Uint8Array;
-    try { const binary = atob(encoded); audio = Uint8Array.from(binary, (ch) => ch.charCodeAt(0)); } catch { return json({ success: false, error: "Reference audio must be valid base64." }, 400, {}, request); }
-    const transcript = String(body.reference_text || "").trim().slice(0, 2000);
-    if (!transcript) return json({ success: false, error: "The reference audio transcript is required." }, 400, {}, request);
-    const speaker = Math.max(0, Math.min(15, Math.floor(Number(body.reference_speaker) || 0)));
-    refs.push({ audio, text: transcript, speaker });
-  }
-  const payload: Record<string, unknown> = { text, references: refs, format, latency: "normal", single_chunk: false, streaming: false, use_memory_cache: "off" };
-  const upstream = env.DRAMA3_URL.replace(/\/+$/, "") + "/v1/tts?format=msgpack";
+  if (note) text = "Direction: " + note + "\n" + text;
+  const format = body.format === "wav" || body.format === "opus" ? String(body.format) : "mp3";
+  const referenceId = String(body.reference_id || "").trim().slice(0, 200);
+  const payload: Record<string, unknown> = { text, format };
+  if (referenceId) payload.reference_id = referenceId;
   let response: Response;
   try {
-    response = await fetch(upstream, { method: "POST", headers: { "authorization": "Bearer " + env.DRAMA3_API_KEY, "content-type": "application/msgpack", "accept": "audio/" + (format === "wav" ? "wav" : format) }, body: msgpack(payload) });
+    response = await fetch("https://api.fish.audio/v1/tts", {
+      method: "POST",
+      headers: {
+        "authorization": "Bearer " + apiKey,
+        "content-type": "application/json",
+        "model": "drama-3",
+        "accept": format === "wav" ? "audio/wav" : format === "opus" ? "audio/ogg" : "audio/mpeg"
+      },
+      body: JSON.stringify(payload)
+    });
   } catch (error) {
-    console.error("Drama 3 upstream connection failed", error);
-    return json({ success: false, error: "Could not connect to the self-hosted Drama 3 server. Check its URL, TLS, and network access." }, 502, {}, request);
+    console.error("Fish Audio Drama 3 request failed", error);
+    return json({ success: false, error: "Could not connect to Fish Audio. Try again shortly." }, 502, {}, request);
   }
   if (!response.ok) {
-    const detail = (await response.text().catch(() => "")).slice(0, 500);
-    console.error("Drama 3 upstream returned", response.status, detail);
-    return json({ success: false, error: "Drama 3 server returned HTTP " + response.status + (detail ? ": " + detail : "") }, 502, {}, request);
+    const detail = (await response.text().catch(() => "")).slice(0, 350);
+    console.error("Fish Audio Drama 3 returned", response.status, detail);
+    const message = response.status === 401 || response.status === 403
+      ? "Fish Audio rejected the API key. Check the FISH_AUDIO_API_KEY Worker secret."
+      : "Fish Audio Drama 3 returned HTTP " + response.status + (detail ? ": " + detail : "");
+    return json({ success: false, error: message }, response.status === 429 ? 429 : 502, {}, request);
   }
-  return new Response(response.body, { status: 200, headers: { ...corsHeaders(request), "content-type": format === "wav" ? "audio/wav" : format === "mp3" ? "audio/mpeg" : "audio/ogg", "cache-control": "no-store", "content-disposition": "inline" } });
+  const contentType = format === "wav" ? "audio/wav" : format === "opus" ? "audio/ogg" : "audio/mpeg";
+  return new Response(response.body, { status: 200, headers: { ...corsHeaders(request), "content-type": contentType, "cache-control": "no-store", "content-disposition": "inline" } });
 }
 
 async function handleImage(request: Request, env: Env) { const body = (await request.json()) as { prompt?: unknown }, prompt = String(body.prompt || "").trim().slice(0, 2048); if (!prompt) return json({ success: false, error: "An image prompt is required." }, 400); const result: any = await env.AI.run(IMAGE_MODEL, { prompt }); const image = typeof result?.image === "string" ? result.image : typeof result?.result?.image === "string" ? result.result.image : ""; if (!image) return json({ success: false, error: "Image generation returned no image." }, 502); return json({ success: true, image, mimeType: "image/jpeg" }); }
