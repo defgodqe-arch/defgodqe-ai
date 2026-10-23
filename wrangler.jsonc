@@ -16,11 +16,12 @@
   },
   "durable_objects": {
     "bindings": [
-      { "name": "GAME_ROOMS", "class_name": "DefGameRoom" }
+      { "name": "GAME_ROOMS", "class_name": "DefGameRoomSqlite" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_classes": ["DefGameRoom"] }
+    { "tag": "v1", "new_classes": ["DefGameRoom"] },
+    { "tag": "v2", "new_sqlite_classes": ["DefGameRoomSqlite"] }
   ],
   "upload_source_maps": true
 }
