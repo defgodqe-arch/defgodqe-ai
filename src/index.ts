@@ -214,10 +214,14 @@ async function handleDramaStudio(request: Request, env: Env) {
   if (!response.ok) {
     const detail = (await response.text().catch(() => "")).slice(0, 350);
     console.error("Fish Audio Drama 3 returned", response.status, detail);
-    const message = response.status === 401 || response.status === 403
+    let message = response.status === 401 || response.status === 403
       ? "Fish Audio rejected the API key. Check the FISH_AUDIO_API_KEY Worker secret."
-      : "Fish Audio Drama 3 returned HTTP " + response.status + (detail ? ": " + detail : "");
-    return json({ success: false, error: message }, response.status === 429 ? 429 : 502, {}, request);
+      : response.status === 402
+        ? "Your Fish Audio API account has insufficient API credit. Add API credit at https://fish.audio/app/developers, then try again."
+        : "Fish Audio Drama 3 returned HTTP " + response.status + (detail ? ": " + detail : "");
+    // Keep upstream client errors visible instead of incorrectly reporting them as a gateway failure.
+    const status = [400, 401, 402, 403, 404, 422, 429].includes(response.status) ? response.status : 502;
+    return json({ success: false, error: message }, status, {}, request);
   }
   const contentType = format === "wav" ? "audio/wav" : format === "opus" ? "audio/ogg" : "audio/mpeg";
   return new Response(response.body, { status: 200, headers: { ...corsHeaders(request), "content-type": contentType, "cache-control": "no-store", "content-disposition": "inline" } });
