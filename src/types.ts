@@ -10,9 +10,9 @@ export interface Env {
   HF_TOKEN?: string;
   /** Optional Hugging Face model override, e.g. Qwen/Qwen3-4B:fastest. */
   HF_MODEL?: string;
-  /** Private base URL for the self-hosted Fish Speech API server, without a trailing slash. */
-  DRAMA3_URL?: string;
-  /** Server-side secret matching the Fish Speech API server --api-key option. Never expose to browsers. */
+  /** Fish Audio hosted API key for Drama 3. Server-side secret only; never expose to browsers. */
+  FISH_AUDIO_API_KEY?: string;
+  /** Legacy server-side secret name accepted as a fallback for Drama 3. */
   DRAMA3_API_KEY?: string;
 }
 
