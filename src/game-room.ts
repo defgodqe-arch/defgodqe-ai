@@ -18,7 +18,7 @@ function clamp(v:number,min:number,max:number){ return Math.max(min,Math.min(max
 function pointToSegmentDistance(px:number,py:number,ax:number,ay:number,bx:number,by:number){ const abx=bx-ax,aby=by-ay,ab2=abx*abx+aby*aby; if(!ab2)return Math.hypot(px-ax,py-ay); const t=clamp(((px-ax)*abx+(py-ay)*aby)/ab2,0,1); return Math.hypot(px-(ax+abx*t),py-(ay+aby*t)); }
 function makeRoomCode(){ return Math.random().toString(36).slice(2,8).toUpperCase().padEnd(6,"X").slice(0,6); }
 
-export class DefGameRoom implements DurableObject {
+export class DefGameRoomSqlite implements DurableObject {
   private sockets=new Map<WebSocket,Player>();
   private players=new Map<string,Player>();
   private lastShot=new Map<string,number>();
