@@ -15,14 +15,17 @@ const RATE_LIMIT = 30;
 const usage = { requests: 0, chat: 0, web: 0, vision: 0, image: 0, tts: 0, errors: 0, started: Date.now() };
 const SYSTEM_PROMPT = `You are defgodqe, an advanced AI assistant created by defgodqe.\nYour name is defgodqe.\nIf asked who created you, who made you, or who your creator is, clearly answer: "I was created by defgodqe." Do not claim another person or company created you.\nNever claim to be ChatGPT or another AI.\nYour tagline is "Your AI. Your Ideas. Your World.".\nSupport fluent English and Spanish. Reply in the same language as the user unless they request another language. For voice responses, use natural, concise spoken phrasing. Be helpful, accurate, creative, concise and honest.\nNever fabricate facts, sources, URLs, actions or files.\nWhen giving code, make it complete and runnable whenever practical.`
 const rateBuckets = new Map<string, { count: number; reset: number }>();
-function corsHeaders(_request?: Request): HeadersInit {
-  // Public AI API: browser clients on GitHub Pages and other frontends do not
-  // use cookie credentials, so always return a consistent wildcard CORS policy.
+function corsHeaders(request?: Request): HeadersInit {
+  // This API is intentionally public and does not use cookie credentials.
+  // Echo the browser origin when present (and use * for non-browser callers),
+  // so Cloudflare/browser caches cannot reuse a mismatched CORS response.
+  const origin = request?.headers.get("Origin");
   return {
-    "access-control-allow-origin": "*",
-    "access-control-allow-methods": "GET, POST, OPTIONS",
-    "access-control-allow-headers": "Content-Type, X-Defgodqe-Client, X-Turnstile-Token",
-    "access-control-max-age": "86400"
+    "Access-Control-Allow-Origin": origin || "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, X-Defgodqe-Client, X-Turnstile-Token, Authorization",
+    "Access-Control-Max-Age": "86400",
+    "Vary": "Origin"
   };
 }
 function json(data: unknown, status = 200, extra: HeadersInit = {}, request?: Request) { return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", ...corsHeaders(request), ...extra } }); }
@@ -35,7 +38,7 @@ function extractText(value: any): string { if (!value) return ""; if (typeof val
 function extractSources(value: any) { const results: Array<{ title: string; url: string; domain: string }> = [], seen = new Set<string>(); function visit(node: any) { if (!node || results.length >= 8) return; if (Array.isArray(node)) { for (const item of node) visit(item); return; } if (typeof node !== "object") return; for (const annotation of Array.isArray(node.annotations) ? node.annotations : []) { if (annotation?.type !== "url_citation") continue; const url = String(annotation?.url || annotation?.citation?.url || "").trim(); if (!/^https?:\/\//i.test(url) || seen.has(url)) continue; seen.add(url); let domain = ""; try { domain = new URL(url).hostname.replace(/^www\./, ""); } catch {} results.push({ title: String(annotation?.title || annotation?.citation?.title || domain || url), url, domain }); } for (const [key, child] of Object.entries(node)) if (key !== "annotations") visit(child); } visit(value); return results; }
 export { DefGameRoom } from "./game-room";
 export default { async fetch(request: Request, env: Env): Promise<Response> {
-  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...corsHeaders(request), "content-length": "0", "cache-control": "no-store" } });
   const url = new URL(request.url);
   if (url.pathname === "/game") return handleGame(request, env);
   if (url.pathname === "/") return env.ASSETS.fetch(new Request(new URL("/index.html", request.url), request));
