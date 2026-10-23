@@ -20,8 +20,7 @@
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_classes": ["DefGameRoom"] },
-    { "tag": "v2", "new_sqlite_classes": ["DefGameRoomSqlite"] }
+    { "tag": "v1", "new_sqlite_classes": ["DefGameRoomSqlite"] }
   ],
   "upload_source_maps": true
 }
